@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstddef>
 #include <cassert>
+#include <stdexcept>
 
 using namespace std;
 
@@ -35,6 +36,20 @@ class SmallString {
       // a raw pointer.
       delete[] fallback;
       fallback = nullptr;
+    }
+
+    // Initializes the fallback with one character.
+    Fallback(const char* c) {
+      if (FALLBACK_INITIAL_CAP == 0) {
+        throw std::out_of_range("Fallback initial capacity is non-positive.");
+      }
+
+      fallback = new char[FALLBACK_INITIAL_CAP];
+      fallback[0] = *c;
+
+      size = 1;
+      capacity = FALLBACK_INITIAL_CAP;
+
     }
 
     static void copy_chars(size_t n, char* from, char* to) noexcept {
@@ -86,10 +101,8 @@ class SmallString {
     void append_char(const char* c) {
       // If the buffer has been exhausted:
       if (_size == BUFFER_LIMIT) {
-        Fallback* _fb_tmp = new Fallback();
-        _fb_tmp->append_char(c);
 
-        _fb = _fb_tmp;
+        _fb = new Fallback(c);
         ++_size;
       }
       else if (_size > BUFFER_LIMIT) {
@@ -117,7 +130,7 @@ class SmallString {
   const char& operator[](size_t i) const {
 
     if (i >= _size) {
-      throw "Out of bounds!";
+      throw std::out_of_range("Index outside of the bounds!");
     }
 
     if (i < BUFFER_LIMIT) {
@@ -126,6 +139,14 @@ class SmallString {
     else {
       return _fb->fallback[i - BUFFER_LIMIT];
     }
+  }
+
+  // Empties the string.
+  void empty() noexcept {
+    delete _fb;
+    _fb = nullptr;
+
+    _size = 0;
   }
 
   // Appends the given literal at the end of the word.
@@ -164,12 +185,56 @@ class SmallString {
   // Move
   SmallString(SmallString&& other) {
     _size = other._size;
-    other._size = BUFFER_LIMIT;
+    other._size = 0;
 
     Fallback::copy_chars(BUFFER_LIMIT, other._buffer, _buffer);
     _fb = other._fb;
 
     other._fb = nullptr;
+  }
+
+  /*
+  Problem:
+  At this point, if we were to do copy-assignment, such as:
+  SmallString a("copy");
+  SmallString b = a;
+  Given that there's no copy-assignment operator, this would
+  default to shallow-copy. This is dangerous, since now both
+  b and a will have the pointer to the same Fallback (and you
+  get double delete!)
+  */
+
+  // Copy-assignment operator
+
+  SmallString& operator=(const SmallString& rhs) {
+
+    empty();
+    char c;
+
+    size_t length = rhs.length();
+    for (size_t i = 0; i < length; ++i) {
+      c = rhs[i];
+      append_char(&c);
+    }
+
+    return *this;
+
+  }
+
+  // Move-assignment operator (we must make sure that the
+  // moved object is left in a graceful state!)
+
+  SmallString& operator=(SmallString&& rhs) {
+
+    _size = rhs._size;
+    rhs._size = 0;
+
+    Fallback::copy_chars(BUFFER_LIMIT, rhs._buffer, _buffer);
+    _fb = rhs._fb;
+    rhs._fb = nullptr;
+
+    return *this;
+
   }
 
   friend SmallString operator+(SmallString, SmallString);
@@ -270,6 +335,20 @@ int main() {
   }
 
   assert(large.length() == 10000);
+
+  // Copy assignment
+  SmallString x("this will disappear");
+  assert (x.length() == 19);
+
+  SmallString y("and this will appear!");
+  x = y;
+  assert (x.length() == y.length());
+  assert (y[2] == 'd');
+
+  // Move assignment
+  y = std::move(x);
+  assert (y == "and this will appear!");
+  assert (x.length() == 0); 
 
   return 0;
 
